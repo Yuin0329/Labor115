@@ -1,56 +1,60 @@
-#include <bits/stdc++.h>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <iostream>
+#include <string>
+#include <vector>
+
 using namespace std;
 
+enum class TermType {
+    Semester,
+    Vacation
+};
+
+struct Policy {
+    TermType term = TermType::Semester;
+    bool continuousEmployment = true;
+    bool includeUnitSupplement = true;
+};
+
 struct Item {
-    int wage;
-    int hour;
-    int day;
+    int wage = 0;
+    int hour = 0;
+    int day = 0;
 
-    int salary;          // 薪資
-    int employerLabor;   // 單位勞保費，按日
-    int personalLabor;   // 個人勞保費，按日
-    int pension;         // 勞退金 6%
-    int supplement;      // 補充保費 2.11%
+    int salary = 0;
+    int insuredSalary = 0;
+    int employerLabor = 0;
+    int personalLabor = 0;
+    int pension = 0;
+    int supplement = 0;
 
-    int fee;             // 單位額外繳納費用：單位勞保 + 勞退 + 補充保費
-    int cost;            // 總成本：薪資 + fee
-    int net;             // 實領：薪資 - 個人負擔
-
-    int levelAmount;     // 投保級距
+    int fee = 0;
+    int cost = 0;
+    int net = 0;
 };
 
 struct State {
     bool valid = false;
-
     int cost = 0;
     int salary = 0;
     int fee = 0;
     int net = 0;
-
     vector<int> picks;
 };
 
-// =====================
-// 可調整參數
-// =====================
-
-constexpr int MIN_HOURLY_WAGE = 196;   // 115 年最低時薪
-constexpr int MAX_HOURLY_WAGE = 294;   // 中央大學學生工讀上限：基本工資時薪 1.5 倍
-
-constexpr int MIN_HOURS_PER_DAY = 1;   // 若沒有每日最低工時限制，從 1 小時開始搜尋
-constexpr int MAX_HOURS_PER_DAY = 8;
-
-constexpr int MIN_WORK_DAYS = 1;       // 若沒有最低工作天數限制，從 1 天開始搜尋
-constexpr int MAX_WORK_DAYS = 44;
-
-constexpr int MAX_MONTHLY_HOURS = 60;  // 學期間每月工讀時數上限；寒暑假可改為 160
+constexpr int MIN_HOURLY_WAGE = 196;     // 115/2026 legal minimum hourly wage
+constexpr int MAX_HOURLY_WAGE = 294;     // school guideline: <= 1.5x minimum
+constexpr int MIN_HOURS_PER_DAY = 1;
+constexpr int MAX_HOURS_PER_DAY = 8;     // Labor Standards Act normal daily cap
+constexpr int MIN_WORK_DAYS = 1;
+constexpr int MAX_WORK_DAYS = 31;        // realistic monthly calendar span
+constexpr int SEMESTER_MAX_MONTH_HOURS = 60;
+constexpr int VACATION_MAX_MONTH_HOURS = 160;
 
 constexpr double PENSION_RATE = 0.06;
 constexpr double SUPPLEMENT_RATE = 0.0211;
-
-// =====================
-// TODO：級距資料仍需整組更新為 115.01 起適用資料
-// =====================
 
 vector<int> level{
     1500, 3000, 4500, 6000, 7500, 8700, 9900, 11100,
@@ -66,7 +70,6 @@ vector<int> level{
     197000, 204500, 212000, 219500
 };
 
-// 勞保費用：單位負擔合計
 vector<int> employerLaborMonthly{
     1004, 1004, 1004, 1004, 1004, 1004, 1004, 1004,
     1129, 1214, 1419, 1477, 1545, 1597, 1700,
@@ -81,7 +84,6 @@ vector<int> employerLaborMonthly{
     4092
 };
 
-// 勞保費用：個人負擔合計
 vector<int> personalLaborMonthly{
     277, 277, 277, 277, 277, 277, 277, 277,
     313, 338, 396, 413, 432, 447, 476,
@@ -101,61 +103,76 @@ int roundMoney(double x) {
     return static_cast<int>(llround(x));
 }
 
+int getMonthlyHourCap(TermType term) {
+    return (term == TermType::Semester) ? SEMESTER_MAX_MONTH_HOURS : VACATION_MAX_MONTH_HOURS;
+}
+
 int getLevelIndex(int monthlySalary) {
     auto it = lower_bound(level.begin(), level.end(), monthlySalary);
-
     if (it == level.end()) {
         return static_cast<int>(level.size()) - 1;
     }
-
     return static_cast<int>(it - level.begin());
 }
 
-Item makeItem(int wage, int hour, int day) {
-    int salary = wage * hour * day;
+Item makeItem(int wage, int hour, int day, const Policy& policy) {
+    const int salary = wage * hour * day;
 
-    // 延續你原本邏輯：
-    // 用「時薪 * 每日工時 * 30」推估月投保級距
-    int monthlySalary = wage * hour * 30;
-    int idx = getLevelIndex(monthlySalary);
+    // Keep monthly insured wage based on agreed monthly workload.
+    const int monthlySalary = wage * hour * 30;
+    const int idx = getLevelIndex(monthlySalary);
+    const int insuredSalary = level[idx];
 
-    int employerLabor = roundMoney(employerLaborMonthly[idx] / 30.0 * day);
-    int personalLabor = roundMoney(personalLaborMonthly[idx] / 30.0 * day);
+    const int employerLabor = policy.continuousEmployment
+        ? employerLaborMonthly[idx]
+        : roundMoney(employerLaborMonthly[idx] / 30.0 * day);
 
-    int pension = roundMoney(salary * PENSION_RATE);
-    int supplement = roundMoney(salary * SUPPLEMENT_RATE);
+    const int personalLabor = policy.continuousEmployment
+        ? personalLaborMonthly[idx]
+        : roundMoney(personalLaborMonthly[idx] / 30.0 * day);
 
-    int fee = employerLabor + pension + supplement;
-    int cost = salary + fee;
-    int net = salary - personalLabor;
+    // Legal minimum is 6%; for continuous employment, use insured monthly wage as the base.
+    const int pensionBase = policy.continuousEmployment ? insuredSalary : salary;
+    const int pension = roundMoney(pensionBase * PENSION_RATE);
+
+    int supplement = 0;
+    if (policy.includeUnitSupplement) {
+        // Unit supplement fee follows:
+        // (salary total - insured salary total) * rate, floored at 0.
+        const int supplementBase = max(0, salary - insuredSalary);
+        supplement = roundMoney(supplementBase * SUPPLEMENT_RATE);
+    }
+
+    const int fee = employerLabor + pension + supplement;
+    const int cost = salary + fee;
+    const int net = salary - personalLabor;
 
     return {
         wage,
         hour,
         day,
         salary,
+        insuredSalary,
         employerLabor,
         personalLabor,
         pension,
         supplement,
         fee,
         cost,
-        net,
-        level[idx]
+        net
     };
 }
 
-vector<Item> buildItems(int budget) {
+vector<Item> buildItems(int budget, const Policy& policy) {
     vector<Item> items;
+    const int maxMonthHours = getMonthlyHourCap(policy.term);
 
     for (int wage = MIN_HOURLY_WAGE; wage <= MAX_HOURLY_WAGE; ++wage) {
         for (int hour = MIN_HOURS_PER_DAY; hour <= MAX_HOURS_PER_DAY; ++hour) {
             for (int day = MIN_WORK_DAYS; day <= MAX_WORK_DAYS; ++day) {
-                // 中央大學學生工讀助學辦法：學期間每月工讀時數以不超過 60 小時為原則
-                if (hour * day > MAX_MONTHLY_HOURS) continue;
+                if (hour * day > maxMonthHours) continue;
 
-                Item item = makeItem(wage, hour, day);
-
+                const Item item = makeItem(wage, hour, day, policy);
                 if (item.cost <= budget) {
                     items.push_back(item);
                 }
@@ -166,69 +183,38 @@ vector<Item> buildItems(int budget) {
     return items;
 }
 
-// =====================
-// 方案 A：剩餘的錢最少
-// =====================
-//
-// 主要目標：預算剩餘最少
-// 次要目標：實領較高
-// 再次目標：繳納費用較少
-//
 bool betterLessLeftover(const State& a, const State& b, int budget) {
     if (!b.valid) return true;
 
-    int leftA = budget - a.cost;
-    int leftB = budget - b.cost;
-
+    const int leftA = budget - a.cost;
+    const int leftB = budget - b.cost;
     if (leftA != leftB) return leftA < leftB;
     if (a.net != b.net) return a.net > b.net;
     if (a.fee != b.fee) return a.fee < b.fee;
-
     return a.picks.size() < b.picks.size();
 }
 
-// =====================
-// 方案 B：繳納費用最少
-// =====================
-//
-// 注意：
-// 如果只比 fee 最少，最佳解通常會變成最低薪資、最低工時、最低天數。
-// 所以這裡定義成：
-//
-// 主要目標：薪資最高
-// 次要目標：繳納費用最少
-// 再次目標：預算剩餘較少
-//
 bool betterLessFee(const State& a, const State& b, int budget) {
     if (!b.valid) return true;
 
     if (a.salary != b.salary) return a.salary > b.salary;
     if (a.fee != b.fee) return a.fee < b.fee;
 
-    int leftA = budget - a.cost;
-    int leftB = budget - b.cost;
-
+    const int leftA = budget - a.cost;
+    const int leftB = budget - b.cost;
     if (leftA != leftB) return leftA < leftB;
     if (a.net != b.net) return a.net > b.net;
-
     return a.picks.size() < b.picks.size();
 }
 
 using CompareFunc = function<bool(const State&, const State&, int)>;
 
-State solve(
-    int budget,
-    int maxParts,
-    const vector<Item>& items,
-    CompareFunc better
-) {
+State solve(int budget, int maxParts, const vector<Item>& items, CompareFunc better) {
     vector<State> cur(budget + 1);
     vector<State> next(budget + 1);
-
     cur[0].valid = true;
 
     State best;
-    best.valid = false;
 
     for (int used = 0; used < maxParts; ++used) {
         next = cur;
@@ -238,12 +224,10 @@ State solve(
 
             for (int i = 0; i < static_cast<int>(items.size()); ++i) {
                 const Item& item = items[i];
-
-                int nextCost = currentCost + item.cost;
+                const int nextCost = currentCost + item.cost;
                 if (nextCost > budget) continue;
 
                 State candidate = cur[currentCost];
-
                 candidate.valid = true;
                 candidate.cost += item.cost;
                 candidate.salary += item.salary;
@@ -262,7 +246,6 @@ State solve(
 
     for (const State& st : cur) {
         if (!st.valid || st.picks.empty()) continue;
-
         if (!best.valid || better(st, best, budget)) {
             best = st;
         }
@@ -272,32 +255,27 @@ State solve(
 }
 
 void printItem(const Item& item) {
-    cout << "時薪: " << item.wage
-         << ", 每日工作時數: " << item.hour
-         << ", 天數: " << item.day
-         << ", 投保級距: " << item.levelAmount << '\n';
+    cout << "wage=" << item.wage
+         << ", hour/day=" << item.hour
+         << ", workDays=" << item.day
+         << ", insuredSalary=" << item.insuredSalary << '\n';
 
-    cout << "薪資: " << item.salary
-         << ", 單位勞保費: " << item.employerLabor
-         << ", 勞退金: " << item.pension
-         << ", 補充保費: " << item.supplement
-         << ", 繳納費用: " << item.fee
-         << ", 總成本: " << item.cost
-         << ", 個人負擔: " << item.personalLabor
-         << ", 實領: " << item.net
+    cout << "salary=" << item.salary
+         << ", employerLabor=" << item.employerLabor
+         << ", pension=" << item.pension
+         << ", supplement=" << item.supplement
+         << ", fee=" << item.fee
+         << ", cost=" << item.cost
+         << ", personalLabor=" << item.personalLabor
+         << ", net=" << item.net
          << "\n\n";
 }
 
-void printSolution(
-    const string& title,
-    const State& st,
-    const vector<Item>& items,
-    int budget
-) {
+void printSolution(const string& title, const State& st, const vector<Item>& items, int budget) {
     cout << "========== " << title << " ==========\n";
 
     if (!st.valid) {
-        cout << "找不到可行解\n\n";
+        cout << "No feasible solution.\n\n";
         return;
     }
 
@@ -305,49 +283,35 @@ void printSolution(
         printItem(items[idx]);
     }
 
-    cout << "合計薪資: " << st.salary << '\n';
-    cout << "合計繳納費用: " << st.fee << '\n';
-    cout << "合計總成本: " << st.cost << '\n';
-    cout << "合計實領: " << st.net << '\n';
-    cout << "預算剩餘: " << budget - st.cost << '\n';
-    cout << "使用組數: " << st.picks.size() << "\n\n";
+    cout << "totalSalary=" << st.salary << '\n';
+    cout << "totalFee=" << st.fee << '\n';
+    cout << "totalCost=" << st.cost << '\n';
+    cout << "totalNet=" << st.net << '\n';
+    cout << "budgetLeft=" << budget - st.cost << '\n';
+    cout << "selectedCount=" << st.picks.size() << "\n\n";
 }
 
 int main() {
-    int budget = 21323;   // 預算
-    int maxParts = 1;    // 最多分成幾種類型
+    const int budget = 21323;
+    const int maxParts = 1;
 
-    vector<Item> items = buildItems(budget);
+    // School/legal rule switches:
+    // - term: semester(60h) / vacation(160h)
+    // - continuousEmployment: if true, labor insurance and pension use full-month logic
+    // - includeUnitSupplement: if true, use unit supplement formula by salary gap
+    Policy policy;
+    policy.term = TermType::Semester;
+    policy.continuousEmployment = true;
+    policy.includeUnitSupplement = true;
 
-    cout << "可行組合數量: " << items.size() << "\n\n";
+    const vector<Item> items = buildItems(budget, policy);
+    cout << "candidateCount=" << items.size() << "\n\n";
 
-    State lessLeftover = solve(
-        budget,
-        maxParts,
-        items,
-        betterLessLeftover
-    );
+    const State lessLeftover = solve(budget, maxParts, items, betterLessLeftover);
+    const State lessFee = solve(budget, maxParts, items, betterLessFee);
 
-    State lessFee = solve(
-        budget,
-        maxParts,
-        items,
-        betterLessFee
-    );
-
-    printSolution(
-        "方案 A：剩餘的錢最少",
-        lessLeftover,
-        items,
-        budget
-    );
-
-    printSolution(
-        "方案 B：繳納費用最少",
-        lessFee,
-        items,
-        budget
-    );
+    printSolution("A: minimize leftover budget", lessLeftover, items, budget);
+    printSolution("B: maximize salary then minimize fee", lessFee, items, budget);
 
     return 0;
 }
