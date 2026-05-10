@@ -1,0 +1,21 @@
+﻿{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "F5 勞健保 UTF-8（不留執行檔）",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$src='${workspaceFolder}\\勞健保計算 (1).cpp'; $gpp='C:\\Users\\jayyu\\AppData\\Local\\Microsoft\\WinGet\\Packages\\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\\mingw64\\bin\\g++.exe'; $mingwBin=Split-Path $gpp; $env:Path=\"$mingwBin;$env:Path\"; $exe=Join-Path $env:TEMP 'labor_calc_tmp.exe'; chcp 65001 > $null; & $gpp -std=c++17 -finput-charset=UTF-8 -fexec-charset=UTF-8 -O2 $src -o $exe; if ($LASTEXITCODE -ne 0) { Write-Host ''; Write-Host '[Build Failed]'; cmd /c pause; exit $LASTEXITCODE }; & $exe; $code=$LASTEXITCODE; Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue; exit $code"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ]
+}
