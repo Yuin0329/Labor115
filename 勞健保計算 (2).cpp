@@ -100,7 +100,7 @@ bool validateTables() {
 }
 
 CalcResult calculate(int wage, int hour, int day) {
-    int monthlySalaryEstimate = wage * hour * 30;  // 沿用學長原始月薪估算方式
+    int monthlySalaryEstimate = wage * hour * 30;  // 沿用原始月薪估算方式
     int idx = findLevelIndex(monthlySalaryEstimate);
 
     int grossPay = wage * hour * day;
