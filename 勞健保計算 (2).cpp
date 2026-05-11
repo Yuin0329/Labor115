@@ -9,7 +9,7 @@ using namespace std;
   115 年中央大學學生工讀／勞健保成本估算
   - 時薪範圍 196~294
   - 每月工時上限檢查
-  - 使用 DP 在預算內做效益最佳化（不固定拆分筆數）
+  - 使用 DP 在預算內做效益最佳化（分別計算拆一筆/拆兩筆）
   - 級距資料表一致性檢查
 
   註：
@@ -22,6 +22,7 @@ constexpr int MAX_HOURLY_WAGE = 294;
 constexpr int MIN_HOURS_PER_DAY = 1;
 constexpr int MAX_HOURS_PER_DAY = 8;
 constexpr int MIN_WORK_DAYS = 1;
+constexpr int MAX_PARTS = 2;  // 最多拆 1~2 筆
 
 // 學期間上限 60；寒暑假可改成 160
 constexpr int MAX_MONTHLY_HOURS = 60;
@@ -173,46 +174,28 @@ int main() {
     }
 
     const int NEG_INF = INT_MIN / 4;
-    vector<int> dpNet(budget + 1, NEG_INF);     // dpNet[b]: 用到 b 預算可達到的最大總實領
-    vector<int> dpCount(budget + 1, INT_MAX);   // 同預算同實領時，偏好筆數較少
-    vector<int> prevBudget(budget + 1, -1);
-    vector<int> prevOption(budget + 1, -1);
+    // dpNet[k][b]：恰好拆 k 筆、用到 b 預算時的最大總實領
+    vector<vector<int>> dpNet(MAX_PARTS + 1, vector<int>(budget + 1, NEG_INF));
+    vector<vector<int>> prevBudget(MAX_PARTS + 1, vector<int>(budget + 1, -1));
+    vector<vector<int>> prevOption(MAX_PARTS + 1, vector<int>(budget + 1, -1));
 
-    dpNet[0] = 0;
-    dpCount[0] = 0;
+    dpNet[0][0] = 0;
 
-    // 無限背包：不限制拆分筆數
-    for (int b = 0; b <= budget; ++b) {
-        if (dpNet[b] == NEG_INF) continue;
-        for (int i = 0; i < static_cast<int>(options.size()); ++i) {
-            int nb = b + options[i].cost;
-            if (nb > budget) continue;
+    // 每次多加一筆，最多加到 MAX_PARTS
+    for (int k = 1; k <= MAX_PARTS; ++k) {
+        for (int b = 0; b <= budget; ++b) {
+            if (dpNet[k - 1][b] == NEG_INF) continue;
+            for (int i = 0; i < static_cast<int>(options.size()); ++i) {
+                int nb = b + options[i].cost;
+                if (nb > budget) continue;
 
-            int candNet = dpNet[b] + options[i].net;
-            int candCount = dpCount[b] + 1;
-
-            if (candNet > dpNet[nb] ||
-                (candNet == dpNet[nb] && candCount < dpCount[nb])) {
-                dpNet[nb] = candNet;
-                dpCount[nb] = candCount;
-                prevBudget[nb] = b;
-                prevOption[nb] = i;
+                int candNet = dpNet[k - 1][b] + options[i].net;
+                if (candNet > dpNet[k][nb]) {
+                    dpNet[k][nb] = candNet;
+                    prevBudget[k][nb] = b;
+                    prevOption[k][nb] = i;
+                }
             }
-        }
-    }
-
-    // 目標：總實領最大；若相同，優先用掉更多預算；再相同選較少筆數
-    int bestUsed = -1;
-    int bestNet = NEG_INF;
-    int bestCount = INT_MAX;
-    for (int b = 0; b <= budget; ++b) {
-        if (dpNet[b] == NEG_INF) continue;
-        if (dpNet[b] > bestNet ||
-            (dpNet[b] == bestNet && b > bestUsed) ||
-            (dpNet[b] == bestNet && b == bestUsed && dpCount[b] < bestCount)) {
-            bestNet = dpNet[b];
-            bestUsed = b;
-            bestCount = dpCount[b];
         }
     }
 
@@ -223,33 +206,53 @@ int main() {
          << setw(18) << "時薪範圍" << ": " << MIN_HOURLY_WAGE << " ~ " << MAX_HOURLY_WAGE << "\n"
          << setw(18) << "每日工時範圍" << ": " << MIN_HOURS_PER_DAY << " ~ " << MAX_HOURS_PER_DAY << "\n"
          << setw(18) << "每月工時上限" << ": " << MAX_MONTHLY_HOURS << "\n"
+         << setw(18) << "最多拆分筆數" << ": " << MAX_PARTS << "\n"
          << setw(18) << "預算" << ": " << budget << "\n"
          << setw(18) << "方案數(去重後)" << ": " << options.size() << "\n";
 
-    if (bestUsed == -1) {
-        cout << "在目前條件下找不到可行組合。\n";
-        return 0;
-    }
+    auto printBestForParts = [&](int parts) {
+        int bestUsed = -1;
+        int bestNet = NEG_INF;
+        for (int b = 0; b <= budget; ++b) {
+            if (dpNet[parts][b] == NEG_INF) continue;
+            if (dpNet[parts][b] > bestNet ||
+                (dpNet[parts][b] == bestNet && b > bestUsed)) {
+                bestNet = dpNet[parts][b];
+                bestUsed = b;
+            }
+        }
 
-    vector<Option> selected;
-    int cur = bestUsed;
-    while (cur > 0 && prevBudget[cur] != -1 && prevOption[cur] != -1) {
-        selected.push_back(options[prevOption[cur]]);
-        cur = prevBudget[cur];
-    }
+        cout << "==================================================\n";
+        cout << "拆分 " << parts << " 筆最佳解\n";
+        cout << "==================================================\n";
+        if (bestUsed == -1) {
+            cout << "在目前條件下找不到可行組合。\n";
+            return;
+        }
 
-    for (const auto& op : selected) {
-        printDetail(op.wage, op.hour, op.day);
-    }
+        vector<Option> selected;
+        int cur = bestUsed;
+        int k = parts;
+        while (k > 0 && cur >= 0 && prevBudget[k][cur] != -1 && prevOption[k][cur] != -1) {
+            selected.push_back(options[prevOption[k][cur]]);
+            cur = prevBudget[k][cur];
+            --k;
+        }
 
-    cout << "==================================================\n";
-    cout << "最佳化結果摘要\n";
-    cout << "==================================================\n";
-    cout << left
-         << setw(18) << "拆分筆數" << ": " << selected.size() << "\n"
-         << setw(18) << "已用預算" << ": " << bestUsed << "\n"
-         << setw(18) << "剩餘預算" << ": " << (budget - bestUsed) << "\n"
-         << setw(18) << "總實領" << ": " << bestNet << "\n";
+        for (const auto& op : selected) {
+            printDetail(op.wage, op.hour, op.day);
+        }
+
+        cout << "--------------------------------------------------\n";
+        cout << left
+             << setw(18) << "拆分筆數" << ": " << parts << "\n"
+             << setw(18) << "已用預算" << ": " << bestUsed << "\n"
+             << setw(18) << "剩餘預算" << ": " << (budget - bestUsed) << "\n"
+             << setw(18) << "總實領" << ": " << bestNet << "\n";
+    };
+
+    printBestForParts(1);
+    printBestForParts(2);
 
     return 0;
 }
