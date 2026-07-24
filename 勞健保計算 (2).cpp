@@ -6,15 +6,11 @@
 using namespace std;
 
 /*
-  115 年中央大學學生工讀／勞健保成本估算
+  工讀勞健保成本估算
   - 時薪範圍 196~294
   - 每月工時上限檢查
-  - 使用 DP 在預算內做效益最佳化（分別計算拆一筆/拆兩筆）
+  - DP 預算內做效益最佳化（分別計算拆一筆/拆兩筆）
   - 級距資料表一致性檢查
-
-  註：
-  1) 目前三個 vector 已依你提供的 115 年 Excel 檔同步更新（sheet1 row 3~37，B/C/I 欄）。
-  2) 若日後調整，三個 vector 必須整組一起改，保持同一 index 對應。
 */
 
 constexpr int MIN_HOURLY_WAGE = 196;
@@ -22,9 +18,9 @@ constexpr int MAX_HOURLY_WAGE = 294;
 constexpr int MIN_HOURS_PER_DAY = 1;
 constexpr int MAX_HOURS_PER_DAY = 8;
 constexpr int MIN_WORK_DAYS = 1;
-constexpr int MAX_PARTS = 2;  // 最多拆 1~2 筆
+constexpr int MAX_PARTS = 2;  // 拆 1~2 筆
 
-// 學期間上限 60；寒暑假可改成 160
+// 學期間上限 60；寒暑假改 160
 constexpr int MAX_MONTHLY_HOURS = 60;
 
 constexpr double PENSION_RATE = 0.06;
